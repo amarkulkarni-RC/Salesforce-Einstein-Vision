@@ -1,5 +1,7 @@
 public class PredictionDemoController {
-	public Blob imageBlob { get; set; }
+    public static String VISION_API = 'https://api.einstein.ai/v2/vision';
+    public static String PREDICT = VISION_API + '/predict';
+    public Blob imageBlob { get; set; }
     public Boolean showImageDetails { get; set; }
     public String predictionLabel { get; set; }
     
@@ -11,7 +13,10 @@ public class PredictionDemoController {
   		showImageDetails = true;        
     }
     
+    // You can upload the "einstein_platform.pem" into your Salesforce org as "File" sObject and read it as below
     public String getAccessToken() {
+         // Ignore the File upload part and "jwt.pkcs" if you used a Salesforce certificate to sign up 
+        // for an Einstein Platform account
         ContentVersion base64Content = [SELECT Title, VersionData FROM ContentVersion where Title='einstein_platform' OR  Title='predictive_services' ORDER BY Title LIMIT 1];
         String keyContents = base64Content.VersionData.tostring();
         keyContents = keyContents.replace('-----BEGIN RSA PRIVATE KEY-----', '');
@@ -23,7 +28,7 @@ public class PredictionDemoController {
         // jwt.cert = 'JWTCert'; // Uncomment this if you used a Salesforce certificate to sign up for an Einstein Platform account
         jwt.pkcs8 = keyContents; // Comment this if you are using jwt.cert
         jwt.iss = 'developer.force.com';
-        jwt.sub = '<<USER_NAME>>';
+        jwt.sub = '<<ORG_USER_NAME>>';
         jwt.aud = 'https://api.einstein.ai/v2/oauth2/token';
         jwt.exp = '3600';
         String access_token = JWTBearerFlow.getAccessToken('https://api.einstein.ai/v2/oauth2/token', jwt);
@@ -31,15 +36,15 @@ public class PredictionDemoController {
         return access_token;    
     }
     
-    public List<Vision.Prediction> getCallVisionUrl() {
+    public List<Prediction> getCallVisionUrl() {
         // Get a new token
         String access_token = getAccessToken();
-        List<Vision.Prediction> predictionList = Vision.predictBlob(imageBlob, access_token, '<<MODEL_ID>>');
+        List<Prediction> predictionList = predictBlob(imageBlob, access_token, '<<MODEL_ID>>');
         
         Decimal value = 0.0;
         String label='';
         
-        for(Vision.Prediction prediction :predictionList){
+        for(Prediction prediction :predictionList){
             if(prediction.probability > value) {
                 value = prediction.probability;
                 label= prediction.Label;
@@ -48,6 +53,75 @@ public class PredictionDemoController {
         
         predictionLabel=label;
         
+        // Make a prediction using URL to a file
         return predictionList;
+    }
+    
+    public List<Prediction> predictBlob(blob fileBlob, String access_token, String model) {
+        return predictInternal(EncodingUtil.base64Encode(fileBlob), access_token, model, true);
+    }
+    
+    public class Prediction {
+        public String label {get;set;}
+        public Double probability {get;set;}
+    }
+    
+     private static List<Prediction> predictInternal(String sample, String access_token, String model, boolean isBase64) {
+        string contentType = HttpFormBuilder.GetContentType();
+        //  Compose the form
+        string form64 = '';
+
+        form64 += HttpFormBuilder.WriteBoundary();
+        form64 += HttpFormBuilder.WriteBodyParameter('modelId', EncodingUtil.urlEncode(model, 'UTF-8'));
+        form64 += HttpFormBuilder.WriteBoundary();
+        if(isBase64) {
+         form64 += HttpFormBuilder.WriteBodyParameter('sampleBase64Content', sample);
+        } else {
+         form64 += HttpFormBuilder.WriteBodyParameter('sampleLocation', sample);
+        }
+        form64 += HttpFormBuilder.WriteBoundary(HttpFormBuilder.EndingType.CrLf);
+
+        blob formBlob = EncodingUtil.base64Decode(form64);
+        string contentLength = string.valueOf(formBlob.size());
+        //  Compose the http request
+        HttpRequest httpRequest = new HttpRequest();
+
+        httpRequest.setBodyAsBlob(formBlob);
+        httpRequest.setHeader('Connection', 'keep-alive');
+        httpRequest.setHeader('Content-Length', contentLength);
+        httpRequest.setHeader('Content-Type', contentType);
+        httpRequest.setMethod('POST');
+        httpRequest.setTimeout(120000);
+        httpRequest.setHeader('Authorization','Bearer ' + access_token);
+        httpRequest.setEndpoint(PREDICT);
+
+        Http http = new Http();
+        List<Prediction> predictions = new List<Prediction>();
+        try {
+              HTTPResponse res = http.send(httpRequest);
+              if (res.getStatusCode() == 200) {
+                  System.JSONParser parser = System.JSON.createParser(res.getBody());
+                  while (parser.nextToken() != null) {
+                      if ((parser.getCurrentToken() == JSONToken.FIELD_NAME) && (parser.getText() == 'probabilities')) {
+                          parser.nextToken();
+                            if (parser.getCurrentToken() == JSONToken.START_ARRAY) {
+                                while (parser.nextToken() != null) {
+                                    // Advance to the start object marker to
+                                    //  find next probability object.
+                                    if (parser.getCurrentToken() == JSONToken.START_OBJECT) {
+                                        // Read entire probability object
+                                        Prediction probability = (Prediction)parser.readValueAs(Prediction.class);
+                                        predictions.add(probability);
+                                    }
+                                }
+                            }
+                      break;
+                      }
+                  }
+              }
+         } catch(System.CalloutException e) {
+                System.debug('ERROR:' + e);
+         }
+         return(predictions);
     }
 }
