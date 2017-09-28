@@ -1,0 +1,19 @@
+<apex:page controller="PredictionDemoController">
+    <apex:form >
+    	<apex:inputfile value="{!imageBlob}" />
+        <apex:image url="{!imageBlob}" />
+        <apex:commandButton value="Predict" action="{!predictImage}" /> 
+        
+        <apex:pageBlock rendered="{!showImageDetails}" >
+            <apex:image url="{!imageBlob}" /> 
+      		
+            <b>Access Token: &nbsp;</b> <apex:outputText value="{!accessToken}" /><br/>
+            
+            <apex:repeat value="{!callVisionUrl}" var="prediction">
+          		<apex:outputText value="{!prediction.label}" />:<apex:outputText value="{!prediction.probability}" /><br/>
+            </apex:repeat>
+            
+             <b><apex:outputText value="{!predictionLabel}" /></b>
+        </apex:pageBlock>
+    </apex:form>
+</apex:page>
